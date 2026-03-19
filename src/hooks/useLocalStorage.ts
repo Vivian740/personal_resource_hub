@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import type { LocalStorageError } from '../types/resource'
 
 // Error log for debugging localStorage issues
@@ -36,7 +36,7 @@ const safeSerialize = <T>(value: T): { success: boolean; data?: string; error?: 
 /**
  * Safely parse a JSON string with type validation
  */
-const safeParse = <T>(raw: string, validator?: (data: unknown) => data is T): { success: boolean; data?: T; error?: string } => {
+const safeParse = <T>(raw: string, validator?: (data: unknown) => data is T): { success: boolean; data: T | null; error?: string } => {
   try {
     const parsed = JSON.parse(raw, (_key, val) => {
       // Restore special types
@@ -56,13 +56,13 @@ const safeParse = <T>(raw: string, validator?: (data: unknown) => data is T): { 
     
     // Optional type validation
     if (validator && !validator(parsed)) {
-      return { success: false, error: 'Parsed data failed type validation' }
+      return { success: false, data: null, error: 'Parsed data failed type validation' }
     }
     
     return { success: true, data: parsed as T }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown parsing error'
-    return { success: false, error: errorMessage }
+    return { success: false, data: null, error: errorMessage }
   }
 }
 
@@ -89,18 +89,25 @@ export const useLocalStorage = <T>(
     validator?: (data: unknown) => data is T
     onError?: (error: string) => void
   }
-) => {
-  const storedValue = ref<T>(initialValue) as ReturnType<typeof ref<T>>
+): {
+  storedValue: Ref<T>
+  getErrorLog: () => LocalStorageError[]
+  clear: () => void
+} => {
+  // Initialize with a deep clone of the initial value
+  const storedValue: Ref<T> = ref<T>(structuredClone(initialValue)) as Ref<T>
 
   // Try to load initial value from localStorage
   const storedRaw = localStorage.getItem(key)
   if (storedRaw) {
     const result = safeParse<T>(storedRaw, options?.validator)
-    if (result.success && result.data !== undefined) {
+    if (result.success && result.data !== null) {
       storedValue.value = result.data
     } else {
       logError(key, result.error || 'Failed to parse stored value')
       options?.onError?.(result.error || 'Failed to parse stored value')
+      // Fall back to initial value on parse failure
+      storedValue.value = structuredClone(initialValue)
     }
   }
 
@@ -132,7 +139,7 @@ export const useLocalStorage = <T>(
     /** Clear stored value from localStorage */
     clear: () => {
       localStorage.removeItem(key)
-      storedValue.value = initialValue
+      storedValue.value = structuredClone(initialValue)
     },
   }
 }
